@@ -133,7 +133,11 @@ else
   fi
 fi
 
-omarchy plugin validate "$PLUGIN_DIR" && say "Manifest validates"
+if omarchy plugin validate "$PLUGIN_DIR"; then
+  say "Manifest validates"
+else
+  warn "'omarchy plugin validate' rejected $PLUGIN_DIR; the bar widget may not load"
+fi
 
 # ---------------------------------------------------------------- fortivpn on PATH
 
@@ -210,10 +214,15 @@ if ((WITH_MENU)); then
 
   # Drop any block a previous run left behind, so reinstalling replaces the
   # entries instead of duplicating the keys.
+  # Blank lines are held back so the separator inserted above our own block
+  # leaves with it, instead of one more piling up on every reinstall.
   stripped=$(awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
-    $0 == b { skip = 1; next }
+    $0 == b { skip = 1; blanks = 0; next }
     $0 == e { skip = 0; next }
-    !skip { print }
+    skip { next }
+    /^[[:space:]]*$/ { blanks++; next }
+    { for (; blanks > 0; blanks--) print ""; print }
+    END { for (; blanks > 0; blanks--) print "" }
   ' "$MENU_FILE")
 
   # Insert before the closing brace of the root object. The line above the
@@ -241,7 +250,11 @@ if ((WITH_MENU)); then
     warn "Could not merge the menu entries; paste $SRC/menu/omarchy-menu.jsonc into $MENU_FILE by hand"
   fi
 
-  grep -q '"vpn"' "$MENU_FILE" && say "Menu entries in place (the shell picks them up on save)"
+  if grep -q '"vpn"' "$MENU_FILE"; then
+    say "Menu entries in place (the shell picks them up on save)"
+  else
+    warn "The VPN section is not in $MENU_FILE; add it from $SRC/menu/omarchy-menu.jsonc"
+  fi
 fi
 
 # ---------------------------------------------------------------- first profile

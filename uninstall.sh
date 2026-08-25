@@ -50,7 +50,7 @@ confirm() {
 
 # Removing the tooling while a tunnel is up would strand its routes and DNS
 # with no convenient way left to take them down.
-if command -v openfortivpn >/dev/null && pgrep -x openfortivpn >/dev/null; then
+if [[ -x $SRC/bin/fortivpn ]] && [[ $("$SRC/bin/fortivpn" status --json 2>/dev/null | jq -r '.state? // "disconnected"') != disconnected ]]; then
   warn "A FortiVPN tunnel is still up."
   if confirm "Disconnect it before uninstalling?"; then
     "$SRC/bin/fortivpn" down || warn "Could not disconnect; do it by hand before removing the plugin"
@@ -86,10 +86,15 @@ fi
 
 if [[ -f $MENU_FILE ]] && grep -qF "$BEGIN_MARK" "$MENU_FILE"; then
   cp "$MENU_FILE" "$MENU_FILE.bak.$(date +%s)"
+  # Same held-back blanks as install.sh: the separator line above the block is
+  # ours, so it goes when the block does.
   awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
-    $0 == b { skip = 1; next }
+    $0 == b { skip = 1; blanks = 0; next }
     $0 == e { skip = 0; next }
-    !skip { print }
+    skip { next }
+    /^[[:space:]]*$/ { blanks++; next }
+    { for (; blanks > 0; blanks--) print ""; print }
+    END { for (; blanks > 0; blanks--) print "" }
   ' "$MENU_FILE" >"$MENU_FILE.new" && mv "$MENU_FILE.new" "$MENU_FILE"
   say "Removed the VPN section from the Omarchy menu"
 else

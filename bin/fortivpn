@@ -15,10 +15,24 @@ DEFAULT_FILE="$CONFIG_DIR/default"
 IFNAME=fortivpn0
 APP=FortiVPN
 
+# Every state read and every privileged signal targets openfortivpn processes
+# running *this* plugin's tunnel, identified by the interface name they were
+# started with. Anchoring the match at the start of the command line keeps out
+# the `sudo openfortivpn …` parent and anything else that merely mentions the
+# flag, and matching on a pattern rather than on a PID means the target is
+# resolved at signal time, inside the privileged call.
+VPN_MATCH='^(/[^ ]*/)?openfortivpn( .*)? --pppd-ifname[= ]'"$IFNAME"'( |$)'
+
 die() { echo "fortivpn: $*" >&2; exit 1; }
 note() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
 notify() { notify-send -a "$APP" -i network-vpn "$APP" "$1" 2>/dev/null || true; }
+
+# Same message twice: to the desktop, and to the terminal when there is one.
+# `up` and `down` are reached from the menu and the bar as often as from a
+# shell, and a caller who typed the command should not have to watch for a
+# notification to learn nothing happened.
+announce() { interactive && note "$1"; notify "$1"; return 0; }
 
 interactive() { [[ -t 0 && -t 1 ]]; }
 
@@ -96,7 +110,7 @@ set_key() {
 
 # ---------------------------------------------------------------- state
 
-vpn_pid() { pgrep -x openfortivpn | head -n1; }
+vpn_pid() { pgrep -f -- "$VPN_MATCH" | head -n1; }
 
 tunnel_ip() {
   ip -4 -o addr show dev "$IFNAME" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1
@@ -146,6 +160,7 @@ cmd_status() {
   [[ $st == disconnected ]] && { profile=""; up=0; }
 
   if [[ ${1:-} == --json ]]; then
+    need jq
     jq -nc \
       --arg state "$st" --arg profile "$profile" --arg ip "$ip" \
       --arg iface "$IFNAME" --argjson uptime "${up:-0}" \
@@ -190,9 +205,17 @@ cmd_run() {
 }
 
 cmd_up() {
-  local profile
-  if cmd_is_up; then
-    notify "Already connected ($(active_profile "$(vpn_pid)"))"
+  local profile pid
+  # A second openfortivpn on the same interface would fight the first for the
+  # tunnel, and the handshake window — password, then 2FA token — is wide
+  # enough to click Connect twice in.
+  pid=$(vpn_pid)
+  if [[ -n $pid ]]; then
+    if cmd_is_up; then
+      announce "Already connected ($(active_profile "$pid"))"
+    else
+      announce "A connection is already in progress"
+    fi
     return 0
   fi
   profile=$(resolve_profile "${1:-}" "Connect to:") || exit 1
@@ -201,21 +224,24 @@ cmd_up() {
 }
 
 cmd_down() {
-  [[ -z $(vpn_pid) ]] && { notify "No active connection"; return 0; }
+  [[ -z $(vpn_pid) ]] && { announce "No active connection"; return 0; }
 
   # SIGINT is openfortivpn's clean shutdown: it tears down the routes and the
   # DNS registration before exiting. SIGKILL would leave both behind.
   #
-  # The target is named, not numbered. Handing a PID we looked up earlier to a
-  # privileged wrapper leaves a window in which that PID can be recycled onto
-  # an unrelated process, and the signal would then be delivered to it as root.
-  # pkill resolves the name at signal time, inside the privileged call, so no
-  # such window exists. It signals every openfortivpn process, which matches
-  # the one-tunnel-at-a-time assumption this tool already documents.
+  # The target is described, not numbered. Handing a PID we looked up earlier
+  # to a privileged wrapper leaves a window in which that PID can be recycled
+  # onto an unrelated process, and the signal would then be delivered to it as
+  # root. pkill resolves the pattern at signal time, inside the privileged
+  # call, so no such window exists.
+  #
+  # The pattern is narrow on purpose: only an openfortivpn started on this
+  # plugin's interface is signalled, so a tunnel someone else on this machine
+  # is running — or one of your own on another interface — is left alone.
   if sudo -n true 2>/dev/null; then
-    sudo pkill -INT -x openfortivpn
+    sudo pkill -INT -f -- "$VPN_MATCH"
   else
-    pkexec /usr/bin/pkill -INT -x openfortivpn
+    pkexec /usr/bin/pkill -INT -f -- "$VPN_MATCH"
   fi
 }
 
@@ -421,9 +447,28 @@ cmd_trust() {
   [[ -n $host ]] || die "profile '$profile' has no host set"
 
   note "Fetching the certificate from $host:$port"
-  digest=$(openssl s_client -connect "$host:$port" -servername "$host" </dev/null 2>/dev/null |
-    openssl x509 -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
 
+  # The DER goes to a file rather than down a pipe into sha256sum: a gateway
+  # that is unreachable, or that hangs up mid-handshake, yields no bytes at
+  # all, and hashing nothing produces a perfectly well-formed digest of the
+  # empty string. Pinning that would overwrite a working trusted-cert with a
+  # value no certificate can ever match.
+  #
+  # timeout, because a gateway that accepts the connection and then says
+  # nothing would otherwise leave s_client waiting for a handshake that never
+  # finishes, in a terminal with no hint of why.
+  local der
+  der=$(mktemp) || die "could not create a temporary file"
+  timeout 15 openssl s_client -connect "$host:$port" -servername "$host" </dev/null 2>/dev/null |
+    openssl x509 -outform DER 2>/dev/null >"$der"
+
+  if [[ ! -s $der ]]; then
+    rm -f "$der"
+    die "could not read a certificate from $host:$port"
+  fi
+
+  digest=$(sha256sum <"$der" | awk '{print $1}')
+  rm -f "$der"
   [[ $digest =~ ^[0-9a-f]{64}$ ]] || die "could not read a certificate from $host:$port"
 
   set_key "$conf" trusted-cert "$digest"

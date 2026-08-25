@@ -105,8 +105,9 @@ Profiles  (~/.config/fortivpn/profiles/<name>.conf, mode 600)
 Omitting `[profile]` opens a `gum` picker when there is a terminal to show it
 in, and falls back to the default profile everywhere else.
 
-On the bar icon: **left click** disconnects, **right click** opens status in a
-terminal, **middle click** forces a re-read.
+On the bar icon: **left click** toggles the tunnel — disconnect while it is up,
+and connect when the icon is showing at all while down (`alwaysShow`) — **right
+click** opens status in a terminal, **middle click** forces a re-read.
 
 `fortivpn status --json` is what the widget consumes:
 
@@ -149,15 +150,35 @@ resolvectl status fortivpn0
 
 ## The sudo password
 
-`Connect` runs in a terminal, so `sudo` asks for the password right there. It
-is the only step that needs root — creating, editing, and deleting profiles
-never do. `Disconnect` has no terminal: it uses `sudo -n` when it can and falls
-back to `pkexec` (the polkit dialog) otherwise.
+Two commands in this plugin cross a privilege boundary, and these are them in
+full:
 
-Disconnecting signals openfortivpn **by name**, inside the privileged call,
+```bash
+# Connect — in the foreground of the floating terminal, so sudo can prompt
+sudo openfortivpn -c ~/.config/fortivpn/profiles/<name>.conf --pppd-ifname=fortivpn0
+
+# Disconnect — sudo -n when a cached credential allows it, pkexec otherwise
+pkill -INT -f -- '^(/[^ ]*/)?openfortivpn( .*)? --pppd-ifname[= ]fortivpn0( |$)'
+```
+
+Nothing else needs root: creating, editing, deleting and pinning profiles never
+do, and the bar widget only reads whether `fortivpn0` has an address.
+
+`Connect` runs in a terminal, so `sudo` asks for the password right there.
+`Disconnect` has no terminal: it uses `sudo -n` when it can and falls back to
+`pkexec` (the polkit dialog) otherwise.
+
+Disconnecting describes its target **by pattern**, inside the privileged call,
 rather than looking up a PID first and handing that number to `sudo`. A PID
 looked up a moment earlier can be recycled onto an unrelated process, and the
-signal would then land on it as root. Naming the target closes that window.
+signal would then land on it as root. Resolving the target at signal time closes
+that window.
+
+The pattern is deliberately narrow. It is anchored at the start of the command
+line, so the `sudo openfortivpn …` parent and any other program that merely
+mentions the flag do not match, and it requires the interface this plugin
+starts its own tunnels on — so a second user's tunnel, or one of your own on
+another interface, is never signalled.
 
 People often ask how to make the password prompt go away with a `NOPASSWD`
 sudoers rule. **This plugin does not ship one and does not recommend writing
@@ -174,7 +195,11 @@ read `sudoers(5)` and `openfortivpn(1)` in full and own the consequences.
 - **No automatic reconnect.** openfortivpn's `--persistent` is deliberately
   left out: with 2FA, a reconnect would hang waiting for a fresh token that
   nobody is there to type. If it drops, you reconnect.
-- **One tunnel at a time.** `pgrep -x openfortivpn` assumes a single process.
+- **One tunnel at a time, on `fortivpn0`.** Status, uptime and disconnect all
+  match openfortivpn processes started with `--pppd-ifname=fortivpn0`, and take
+  the first. A tunnel on another interface is invisible here — deliberately, so
+  this plugin never touches one it did not start. `Connect` refuses while a
+  handshake for this interface is already in flight.
 - **Username + password (+ 2FA) only.** For SAML/SSO, openfortivpn has
   `--saml-login`; the connect path would need that flag and the browser would
   become part of the login.
