@@ -5,7 +5,8 @@
 # widget. Your VPN profiles are left alone unless you ask for them to go.
 #
 #   ./uninstall.sh                remove the wiring, keep profiles and plugin files
-#   ./uninstall.sh --profiles     also delete ~/.config/fortivpn (profiles included)
+#   ./uninstall.sh --profiles     also delete ~/.config/fortivpn and the logs in
+#                                 ~/.local/state/fortivpn
 #   ./uninstall.sh --plugin       also delete the installed plugin directory
 #   ./uninstall.sh --all --yes    everything, no prompts
 
@@ -17,6 +18,8 @@ PLUGIN_DIR="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 BIN_LINK="$HOME/.local/bin/fortivpn"
 MENU_FILE="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
 PROFILE_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/fortivpn"
+STATE_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/fortivpn"
+RUNTIME_ROOT="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/fortivpn"
 BEGIN_MARK="// >>> $PLUGIN_ID — managed by install.sh, edits here are overwritten"
 END_MARK="// <<< $PLUGIN_ID"
 
@@ -108,8 +111,20 @@ if ((DROP_PROFILES)); then
     rm -rf "${PROFILE_ROOT:?}"
     say "Deleted $PROFILE_ROOT"
   fi
+  # The connection logs are the other thing this plugin leaves in your home,
+  # so they go with the profiles rather than outliving them.
+  if [[ -d $STATE_ROOT ]]; then
+    rm -rf "${STATE_ROOT:?}"
+    say "Deleted $STATE_ROOT"
+  fi
 elif [[ -d $PROFILE_ROOT ]]; then
   say "Your profiles are untouched in $PROFILE_ROOT (remove them with --profiles)"
+fi
+
+# Whatever a killed connect left behind on tmpfs. It would go at logout anyway,
+# but a file that once held a password should not wait for one.
+if [[ -d $RUNTIME_ROOT ]]; then
+  rm -rf "${RUNTIME_ROOT:?}"
 fi
 
 # ---------------------------------------------------------------- plugin files

@@ -12,8 +12,16 @@ set -uo pipefail
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fortivpn"
 PROFILE_DIR="$CONFIG_DIR/profiles"
 DEFAULT_FILE="$CONFIG_DIR/default"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/fortivpn"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/fortivpn"
 IFNAME=fortivpn0
 APP=FortiVPN
+UNIT=fortivpn-tunnel
+
+# The config handed to the running tunnel, holding the secrets typed at
+# connect time. Set by cmd_run, and removed again by run_cleanup on every way
+# out of it.
+RUN_CONF=""
 
 # Every state read and every privileged signal targets openfortivpn processes
 # running *this* plugin's tunnel, identified by the interface name they were
@@ -37,6 +45,27 @@ announce() { interactive && note "$1"; notify "$1"; return 0; }
 interactive() { [[ -t 0 && -t 1 ]]; }
 
 need() { command -v "$1" >/dev/null || die "'$1' is required but not installed"; }
+
+# A password and a one-time token can only come from a person at a keyboard.
+# gum when it is there, plain `read` when it is not; both put the prompt on
+# the terminal and the answer on stdout, so either can be captured.
+ask_secret() {
+  local value
+  if command -v gum >/dev/null; then
+    gum input --password --prompt "$1 "
+  else
+    read -rsp "$1 " value && echo >&2 && printf '%s\n' "$value"
+  fi
+}
+
+ask_plain() {
+  local value
+  if command -v gum >/dev/null; then
+    gum input --prompt "$1 "
+  else
+    read -rp "$1 " value && printf '%s\n' "$value"
+  fi
+}
 
 # ---------------------------------------------------------------- profiles
 
@@ -190,31 +219,136 @@ cmd_status() {
 
 cmd_is_up() { [[ $(state) == connected ]]; }
 
-# Runs in the foreground inside the floating terminal. openfortivpn needs a
-# terminal because the password and then the 2FA token are typed here — a
-# token that rotates every 30s cannot live in a config file.
+# Removing the transient config is the one thing that must happen on every
+# path out of cmd_run, including a Ctrl+C at the password prompt.
+run_cleanup() {
+  [[ -n $RUN_CONF ]] && rm -f "$RUN_CONF"
+  RUN_CONF=""
+  return 0
+}
+
+# Runs inside the floating terminal, but only for as long as the handshake
+# takes. The secrets are collected here because a terminal is the only place
+# to ask for them; the tunnel itself is then started in a session of its own,
+# so this window can close while the connection stays up.
 cmd_run() {
-  local profile=$1 conf status
+  local profile=$1 conf log password="" token="" waited=0 limit=90 tail_pid=""
   conf=$(conf_path "$profile")
   [[ -f $conf ]] || die "no profile named '$profile'"
+  need openfortivpn
+  need systemd-run
 
   echo "Connecting to '$profile'…"
-  echo "Type your password and, when prompted, the 2FA token. Ctrl+C ends the VPN."
+  echo "This window closes once the tunnel is up. Disconnect with: fortivpn down"
   [[ -z $(get_key "$conf" trusted-cert) ]] &&
     warn "This profile has no trusted-cert yet. If the gateway certificate is rejected, run: fortivpn trust $profile"
   echo
 
-  # --persistent is deliberately left out: with 2FA an automatic reconnect
-  # would hang waiting for a fresh token that nobody is there to type.
-  sudo openfortivpn -c "$conf" --pppd-ifname="$IFNAME"
-  status=$?
+  # Ask for root here, while there is still a terminal to ask on. Priming the
+  # sudo timestamp is what lets the launch below run without one.
+  sudo -v || die "root is required to bring the tunnel up"
 
-  if ((status != 0)); then
-    echo
-    warn "openfortivpn exited with status $status"
-    interactive && read -rsn1 -p "Press any key to close… "
+  # A cancelled prompt has to stop the connection, not fall through to one
+  # with no password in it: with no terminal left to ask on, openfortivpn
+  # would fail on the far side of a window that had already closed.
+  if [[ -z $(get_key "$conf" password) ]]; then
+    password=$(ask_secret "VPN account password:") || die "cancelled"
+    [[ -n $password ]] || die "a password is required"
   fi
-  return "$status"
+  token=$(ask_plain "2FA token (leave empty for push approval, or no 2FA):") || die "cancelled"
+  echo
+
+  # openfortivpn reads the password and the one-time token from its config
+  # file, and a config file is the only way to hand them to a process that has
+  # no terminal to be asked on. This copy lives on tmpfs, mode 600, for the
+  # seconds between here and the handshake, and is deleted as soon as
+  # openfortivpn has read it — the profile itself never gains a password it
+  # did not already have.
+  #
+  # It is named for the profile, not for the run, because the indicator reads
+  # the live profile name off the `-c` argument of the running process.
+  mkdir -p "$RUNTIME_DIR" && chmod 700 "$RUNTIME_DIR"
+  RUN_CONF="$RUNTIME_DIR/$profile.conf"
+  trap 'run_cleanup; exit 130' INT TERM
+  trap run_cleanup EXIT
+
+  rm -f "$RUN_CONF"
+  (umask 077; : >"$RUN_CONF") || die "could not write $RUN_CONF"
+  {
+    cat "$conf"
+    [[ -n $password ]] && printf 'password = %s\n' "$password"
+    [[ -n $token ]] && printf 'otp = %s\n' "$token"
+    :
+  } >"$RUN_CONF"
+
+  mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
+  log="$STATE_DIR/$profile.log"
+  rm -f "$log"
+  (umask 077; : >"$log") || die "could not write $log"
+
+  # Root is needed for the tunnel, but sudo must not be the thing that owns
+  # it. Since 1.9.14 sudo runs its command in a pty by default (`use_pty`),
+  # and when that command exits sudo tears the pty down and kills whatever is
+  # left in its session — so a tunnel detached with `setsid` under sudo is
+  # killed before it manages to write its first line, which looks exactly like
+  # a connection that failed for no reason.
+  #
+  # systemd-run hands the job to PID 1 instead. sudo only asks for the unit to
+  # be started and returns; the tunnel belongs to systemd and outlives both it
+  # and this window. Type=exec makes that ask wait until openfortivpn has
+  # actually been exec'd, so a launch that never got off the ground is an
+  # error here rather than a silent failure to appear.
+  #
+  # --persistent is deliberately left out: a reconnect would need a fresh
+  # one-time token, and by then there is nobody at a terminal to type one.
+  sudo systemd-run --quiet --collect --unit="$UNIT" \
+    --property=Type=exec \
+    --property=KillSignal=SIGINT \
+    --property=StandardOutput=append:"$log" \
+    --property=StandardError=append:"$log" \
+    "$(command -v openfortivpn)" -c "$RUN_CONF" --pppd-ifname="$IFNAME" ||
+    die "could not start the tunnel; if a stale unit is in the way: sudo systemctl reset-failed $UNIT"
+
+  # Show the handshake while it happens. There is nothing to watch after it,
+  # and nothing left in this window that the tunnel depends on.
+  tail -n +1 -f "$log" &
+  tail_pid=$!
+
+  # "No process" means two different things depending on when it is asked.
+  # Before openfortivpn is visible to pgrep it means "not yet"; after it has
+  # been seen once it means the tunnel died. Reading the first as the second
+  # would report a failure and delete the config the process is still about to
+  # read.
+  local seen=0
+  while ((waited < limit)); do
+    cmd_is_up && break
+    if [[ -n $(vpn_pid) ]]; then
+      seen=1
+    elif ((seen)) || ((waited >= 5)); then
+      break
+    fi
+    sleep 1
+    ((waited += 1))
+  done
+
+  [[ -n $tail_pid ]] && { kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null; }
+  run_cleanup
+  echo
+
+  if cmd_is_up; then
+    announce "Connected to $profile"
+    return 0
+  fi
+
+  if [[ -z $(vpn_pid) ]]; then
+    warn "The connection failed. Full log: $log"
+    notify "Could not connect to $profile"
+  else
+    warn "Still negotiating after ${limit}s. Check with: fortivpn status"
+    warn "The tunnel is running detached; stop it with: fortivpn down"
+  fi
+  interactive && read -rsn1 -p "Press any key to close… "
+  return 1
 }
 
 cmd_up() {
@@ -504,11 +638,13 @@ cmd_help() {
 fortivpn — FortiGate SSL VPN control for Omarchy
 
 Connection
-  fortivpn up [profile]        Connect in a floating terminal (password + 2FA token)
+  fortivpn up [profile]        Connect: type password + 2FA token, window closes
   fortivpn down                Disconnect, tearing down routes and DNS cleanly
   fortivpn toggle [profile]    Connect when down, disconnect when up
   fortivpn status [--json]     Profile, tunnel address, uptime
   fortivpn is-up               Exit 0 while the tunnel is up
+
+The handshake is logged to ~/.local/state/fortivpn/<profile>.log.
 
 Profiles  (~/.config/fortivpn/profiles/<name>.conf, mode 600)
   fortivpn list                List profiles

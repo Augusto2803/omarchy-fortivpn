@@ -19,9 +19,17 @@ Authentication with 2FA needs a human typing a token that rotates every 30
 seconds. That does not fit in a config file, and it does not fit in a systemd
 unit that starts at boot. So:
 
-- **Connect** opens a floating terminal and runs `openfortivpn` in the
-  foreground. You type the password and the token there. That window holds the
-  connection — closing it or pressing `Ctrl+C` brings the VPN down.
+- **Connect** opens a floating terminal to collect the password and the token,
+  because a terminal is the only place to ask for them. It then starts
+  `openfortivpn` as a transient systemd unit and closes as soon as the tunnel
+  is up. The window holds nothing the connection needs — the tunnel outlives
+  it, and `fortivpn down` is what ends it.
+- The secrets reach the detached process through a copy of the profile written
+  to `$XDG_RUNTIME_DIR/fortivpn/<name>.conf` (tmpfs, mode 600) with `password`
+  and `otp` appended. It is deleted as soon as the handshake settles; the
+  profile itself never gains a password it did not already have.
+- The handshake is logged to `~/.local/state/fortivpn/<name>.log`, shown live
+  in the window while it connects and left behind for when it fails.
 - **Disconnect** sends `SIGINT`, which is openfortivpn's clean shutdown: it
   removes the routes and the DNS registration before exiting.
 - The bar widget only **reads** state — does the `fortivpn0` interface have an
@@ -154,8 +162,12 @@ Two commands in this plugin cross a privilege boundary, and these are them in
 full:
 
 ```bash
-# Connect — in the foreground of the floating terminal, so sudo can prompt
-sudo openfortivpn -c ~/.config/fortivpn/profiles/<name>.conf --pppd-ifname=fortivpn0
+# Connect — sudo prompts in the floating terminal, then hands the tunnel to PID 1
+sudo systemd-run --quiet --collect --unit=fortivpn-tunnel \
+  --property=Type=exec --property=KillSignal=SIGINT \
+  --property=StandardOutput=append:$HOME/.local/state/fortivpn/<name>.log \
+  --property=StandardError=append:$HOME/.local/state/fortivpn/<name>.log \
+  /usr/bin/openfortivpn -c "$XDG_RUNTIME_DIR/fortivpn/<name>.conf" --pppd-ifname=fortivpn0
 
 # Disconnect — sudo -n when a cached credential allows it, pkexec otherwise
 pkill -INT -f -- '^(/[^ ]*/)?openfortivpn( .*)? --pppd-ifname[= ]fortivpn0( |$)'
@@ -167,6 +179,17 @@ do, and the bar widget only reads whether `fortivpn0` has an address.
 `Connect` runs in a terminal, so `sudo` asks for the password right there.
 `Disconnect` has no terminal: it uses `sudo -n` when it can and falls back to
 `pkexec` (the polkit dialog) otherwise.
+
+**Why `systemd-run` and not just `sudo openfortivpn &`.** Since sudo 1.9.14,
+`use_pty` is the default: sudo runs its command in a pseudo-terminal, and when
+that command exits it tears the pty down and kills whatever is left in its
+session. A tunnel detached with `setsid` under sudo is therefore killed before
+it writes its first line — which looks exactly like a connection that failed
+for no reason at all. `systemd-run` sidesteps it: sudo only asks PID 1 to start
+a transient unit and returns, and the tunnel belongs to systemd, outliving both
+sudo and the window. `Type=exec` makes that ask wait until `openfortivpn` has
+actually been exec'd, so a launch that never got off the ground is reported
+here rather than as a process that mysteriously fails to appear.
 
 Disconnecting describes its target **by pattern**, inside the privileged call,
 rather than looking up a PID first and handing that number to `sudo`. A PID
@@ -193,8 +216,8 @@ read `sudoers(5)` and `openfortivpn(1)` in full and own the consequences.
 ## Known limitations
 
 - **No automatic reconnect.** openfortivpn's `--persistent` is deliberately
-  left out: with 2FA, a reconnect would hang waiting for a fresh token that
-  nobody is there to type. If it drops, you reconnect.
+  left out: with 2FA, a reconnect would need a fresh token, and by then there is
+  no terminal left to type one in. If it drops, you reconnect.
 - **One tunnel at a time, on `fortivpn0`.** Status, uptime and disconnect all
   match openfortivpn processes started with `--pppd-ifname=fortivpn0`, and take
   the first. A tunnel on another interface is invisible here — deliberately, so
