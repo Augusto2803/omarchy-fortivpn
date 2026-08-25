@@ -9,7 +9,7 @@ or the CLI, in a floating terminal.
 
 | | |
 |---|---|
-| Plugin id | `augusto2803.fortivpn` |
+| Plugin id | `io.github.augusto2803.fortivpn` |
 | Kind | `bar-widget` |
 | Requires | Omarchy 4, `openfortivpn`, `jq`, `openssl`, `gum` |
 
@@ -38,7 +38,7 @@ That is enough for the bar widget. To also get the `fortivpn` command on your
 plugin directory:
 
 ```bash
-~/.config/omarchy/plugins/augusto2803.fortivpn/install.sh
+~/.config/omarchy/plugins/io.github.augusto2803.fortivpn/install.sh
 ```
 
 Or, from a clone anywhere on disk, `./install.sh` does both steps at once. It
@@ -121,7 +121,7 @@ terminal, **middle click** forces a re-read.
 In `~/.config/omarchy/shell.json`, on the widget's layout entry:
 
 ```json
-{ "id": "augusto2803.fortivpn", "refreshIntervalSec": 5, "alwaysShow": false }
+{ "id": "io.github.augusto2803.fortivpn", "refreshIntervalSec": 5, "alwaysShow": false }
 ```
 
 | Key | Default | Meaning |
@@ -132,8 +132,8 @@ In `~/.config/omarchy/shell.json`, on the widget's layout entry:
 The widget also registers an IPC target:
 
 ```bash
-omarchy-shell augusto2803.fortivpn refresh
-omarchy-shell augusto2803.fortivpn toggle
+omarchy-shell io.github.augusto2803.fortivpn refresh
+omarchy-shell io.github.augusto2803.fortivpn toggle
 ```
 
 ## DNS
@@ -182,7 +182,7 @@ read `sudoers(5)` and `openfortivpn(1)` in full and own the consequences.
 ## Uninstall
 
 ```bash
-~/.config/omarchy/plugins/augusto2803.fortivpn/uninstall.sh
+~/.config/omarchy/plugins/io.github.augusto2803.fortivpn/uninstall.sh
 ```
 
 It disconnects an open tunnel first, removes the bar widget, the `fortivpn`
@@ -199,7 +199,7 @@ Your profiles survive by default.
 To remove the plugin files without the script:
 
 ```bash
-omarchy plugin remove augusto2803.fortivpn
+omarchy plugin remove io.github.augusto2803.fortivpn
 ```
 
 ## License

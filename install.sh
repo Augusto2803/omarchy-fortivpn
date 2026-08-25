@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the augusto2803.fortivpn plugin on this machine.
+# Install the io.github.augusto2803.fortivpn plugin on this machine.
 #
 # The bar widget alone needs nothing but this repo sitting in
 # ~/.config/omarchy/plugins/ — `omarchy plugin add` does that much on its own.

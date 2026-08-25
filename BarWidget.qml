@@ -15,7 +15,7 @@ import "Model.js" as Model
 // terminal a human can type into — the CLI opens a floating one.
 BarWidget {
   id: root
-  moduleName: "augusto2803.fortivpn"
+  moduleName: "io.github.augusto2803.fortivpn"
 
   property var status: Model.DISCONNECTED
 
@@ -62,7 +62,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "augusto2803.fortivpn"
+    target: "io.github.augusto2803.fortivpn"
 
     function refresh(): void { root.broadcast("refresh") }
     function connect(): void { root.broadcast("connect") }

@@ -12,7 +12,7 @@
 set -euo pipefail
 
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-PLUGIN_ID=$(jq -r .id "$SRC/manifest.json" 2>/dev/null || echo augusto2803.fortivpn)
+PLUGIN_ID=$(jq -r .id "$SRC/manifest.json" 2>/dev/null || echo io.github.augusto2803.fortivpn)
 PLUGIN_DIR="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 BIN_LINK="$HOME/.local/bin/fortivpn"
 MENU_FILE="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"

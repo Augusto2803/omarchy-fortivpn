@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fortivpn — openfortivpn driver for the Omarchy shell plugin augusto2803.fortivpn.
+# fortivpn — openfortivpn driver for the Omarchy shell plugin io.github.augusto2803.fortivpn.
 #
 # Profiles are plain openfortivpn config files owned by you, one per gateway,
 # in ~/.config/fortivpn/profiles. Only the connect itself needs root; creating,
