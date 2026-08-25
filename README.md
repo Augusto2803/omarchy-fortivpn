@@ -43,8 +43,14 @@ plugin directory:
 
 Or, from a clone anywhere on disk, `./install.sh` does both steps at once. It
 copies the plugin into `~/.config/omarchy/plugins/`, links the command, enables
-the widget, and merges the menu entries. `--link` symlinks instead of copying
-for development, and `--no-menu` skips the menu.
+the widget, and merges the menu entries.
+
+It prints every file it will change and asks before touching any of them, so
+you can say no. `--yes` accepts without prompting (and is required when there
+is no terminal to ask in), `--no-menu` skips the menu entries, and `--link`
+symlinks instead of copying for development. Re-running it is safe: it replaces
+its own menu block rather than duplicating keys, and leaves a widget you have
+already positioned where it is. [`uninstall.sh`](#uninstall) reverses all of it.
 
 ## First profile
 
@@ -148,20 +154,20 @@ is the only step that needs root — creating, editing, and deleting profiles
 never do. `Disconnect` has no terminal: it uses `sudo -n` when it can and falls
 back to `pkexec` (the polkit dialog) otherwise.
 
-You can remove both prompts with a sudoers rule, but **weigh it first**:
-`openfortivpn` accepts `--pppd-plugin`, which loads an arbitrary `.so` as root.
-A `NOPASSWD` rule that is too broad on that binary is privilege escalation.
-Profiles live in your home directory and are writable by you, so a rule that
-lets any config through is equally an escalation. If you do it, pin the whole
-command line, with no wildcard:
+Disconnecting signals openfortivpn **by name**, inside the privileged call,
+rather than looking up a PID first and handing that number to `sudo`. A PID
+looked up a moment earlier can be recycled onto an unrelated process, and the
+signal would then land on it as root. Naming the target closes that window.
 
-```
-# /etc/sudoers.d/fortivpn  (edit with: visudo -f /etc/sudoers.d/fortivpn)
-you ALL=(root) NOPASSWD: /usr/bin/openfortivpn -c /etc/openfortivpn/work.conf --pppd-ifname\=fortivpn0
-```
-
-Note that this means keeping that particular profile under `/etc`, root-owned,
-rather than in `~/.config/fortivpn/profiles`.
+People often ask how to make the password prompt go away with a `NOPASSWD`
+sudoers rule. **This plugin does not ship one and does not recommend writing
+one.** `openfortivpn` accepts `--pppd-plugin`, which loads an arbitrary shared
+object as root, so a passwordless rule on that binary hands every process
+running as you a route to root. Pinning the exact command line narrows it, but
+profiles live in your home directory and are writable by you, so the config
+that rule points at is still attacker-controlled unless you also move it to a
+root-owned path. Two prompts per session is a reasonable price; if you disagree,
+read `sudoers(5)` and `openfortivpn(1)` in full and own the consequences.
 
 ## Known limitations
 
@@ -172,6 +178,29 @@ rather than in `~/.config/fortivpn/profiles`.
 - **Username + password (+ 2FA) only.** For SAML/SSO, openfortivpn has
   `--saml-login`; the connect path would need that flag and the browser would
   become part of the login.
+
+## Uninstall
+
+```bash
+~/.config/omarchy/plugins/augusto2803.fortivpn/uninstall.sh
+```
+
+It disconnects an open tunnel first, removes the bar widget, the `fortivpn`
+symlink, and the menu block, and tells you where everything it left behind is.
+Your profiles survive by default.
+
+| Flag | Also does |
+|---|---|
+| `--profiles` | deletes `~/.config/fortivpn` and every profile in it |
+| `--plugin` | deletes the installed plugin directory |
+| `--all` | both of the above |
+| `--yes` | skips the confirmations |
+
+To remove the plugin files without the script:
+
+```bash
+omarchy plugin remove augusto2803.fortivpn
+```
 
 ## License
 

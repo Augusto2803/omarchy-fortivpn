@@ -201,16 +201,21 @@ cmd_up() {
 }
 
 cmd_down() {
-  local pid
-  pid=$(vpn_pid)
-  [[ -z $pid ]] && { notify "No active connection"; return 0; }
+  [[ -z $(vpn_pid) ]] && { notify "No active connection"; return 0; }
 
   # SIGINT is openfortivpn's clean shutdown: it tears down the routes and the
   # DNS registration before exiting. SIGKILL would leave both behind.
+  #
+  # The target is named, not numbered. Handing a PID we looked up earlier to a
+  # privileged wrapper leaves a window in which that PID can be recycled onto
+  # an unrelated process, and the signal would then be delivered to it as root.
+  # pkill resolves the name at signal time, inside the privileged call, so no
+  # such window exists. It signals every openfortivpn process, which matches
+  # the one-tunnel-at-a-time assumption this tool already documents.
   if sudo -n true 2>/dev/null; then
-    sudo kill -INT "$pid"
+    sudo pkill -INT -x openfortivpn
   else
-    pkexec /usr/bin/kill -INT "$pid"
+    pkexec /usr/bin/pkill -INT -x openfortivpn
   fi
 }
 

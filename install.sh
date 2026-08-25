@@ -6,7 +6,10 @@
 # This script adds the parts that live outside the plugin folder: the
 # `fortivpn` command on PATH and the VPN section of the Omarchy menu.
 #
+# It lists everything it will change and asks before touching anything.
+#
 #   ./install.sh            copy the plugin into place, then wire it up
+#   ./install.sh --yes      accept the changes without prompting
 #   ./install.sh --link     symlink instead (development; see the warning below)
 #   ./install.sh --no-menu  skip the Omarchy menu entries
 
@@ -23,12 +26,14 @@ END_MARK="// <<< $PLUGIN_ID"
 
 MODE=copy
 WITH_MENU=1
+ASSUME_YES=0
 
 while (($# > 0)); do
   case $1 in
     --link) MODE=link; shift ;;
     --no-menu) WITH_MENU=0; shift ;;
-    -h | --help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's|^# \?||'; exit 0 ;;
+    --yes | -y) ASSUME_YES=1; shift ;;
+    -h | --help) sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's|^# \?||'; exit 0 ;;
     *) echo "install.sh: unknown option $1" >&2; exit 1 ;;
   esac
 done
@@ -41,6 +46,59 @@ warn() { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
 for tool in jq openssl; do
   command -v "$tool" >/dev/null || { echo "install.sh: '$tool' is required" >&2; exit 1; }
 done
+
+# ---------------------------------------------------------------- consent
+
+# Everything below writes outside this repo — into your shell config, your bar
+# layout, your menu and your PATH. Say so plainly first and let the answer be
+# no; nothing here is worth doing behind your back.
+cat <<SUMMARY
+
+This will change the following on this machine:
+
+  $PLUGIN_DIR
+      the plugin files ($MODE)
+  $BIN_DIR/fortivpn
+      a symlink to the bundled fortivpn command
+  ~/.config/omarchy/shell.json
+      adds the FortiVPN widget to the bar, if it is not already there
+SUMMARY
+
+if ((WITH_MENU)); then
+  cat <<SUMMARY
+  $MENU_FILE
+      adds a VPN section, in a marked block, after backing the file up
+SUMMARY
+fi
+
+if ! command -v openfortivpn >/dev/null; then
+  cat <<SUMMARY
+  system packages
+      installs openfortivpn with 'omarchy pkg add'
+SUMMARY
+fi
+
+cat <<'SUMMARY'
+
+Nothing else is touched, and uninstall.sh reverses all of it.
+
+SUMMARY
+
+if ((!ASSUME_YES)); then
+  if [[ -t 0 && -t 1 ]]; then
+    if command -v gum >/dev/null; then
+      gum confirm "Proceed?" || { say "Nothing changed."; exit 0; }
+    else
+      read -rp "Proceed? [y/N] " reply
+      [[ $reply =~ ^[Yy] ]] || { say "Nothing changed."; exit 0; }
+    fi
+  else
+    echo "install.sh: refusing to change your configuration without confirmation; pass --yes" >&2
+    exit 1
+  fi
+fi
+
+# ---------------------------------------------------------------- packages
 
 if ! command -v openfortivpn >/dev/null; then
   say "Installing openfortivpn"
@@ -193,4 +251,4 @@ if [[ -z $("$PLUGIN_DIR/bin/fortivpn" list) ]]; then
   say "  fortivpn new"
 fi
 
-say "Done."
+say "Done. Undo any of this with ./uninstall.sh"
