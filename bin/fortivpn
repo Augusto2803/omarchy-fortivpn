@@ -46,6 +46,19 @@ valid_name() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $1 != *..* ]]; }
 
 conf_path() { echo "$PROFILE_DIR/$1.conf"; }
 
+# A gateway rarely arrives as a bare name: it is pasted as
+# `https://vpn.example.com:10442/remote/login`, or typed with the port stuck
+# to it. openfortivpn takes host and port as two separate settings and
+# resolves `host` literally, so anything left attached turns into a DNS
+# failure with nothing in the message to point at the real mistake. Strip the
+# scheme and the path here, where it is still obvious what happened.
+normalize_host() {
+  local raw=$1
+  raw=${raw#*://}
+  raw=${raw%%/*}
+  echo "$raw"
+}
+
 list_profiles() {
   find "$PROFILE_DIR" -maxdepth 1 -type f -name '*.conf' -printf '%f\n' 2>/dev/null |
     sed 's/\.conf$//' | sort
@@ -258,12 +271,12 @@ cmd_use() {
 }
 
 cmd_new() {
-  local name="" host="" port=443 username="" set_routes=1
+  local name="" host="" port=443 port_given=0 username="" set_routes=1
 
   while (($# > 0)); do
     case $1 in
       --host) host=${2:-}; shift 2 ;;
-      --port) port=${2:-}; shift 2 ;;
+      --port) port=${2:-}; port_given=1; shift 2 ;;
       --username | --user) username=${2:-}; shift 2 ;;
       --split-tunnel) set_routes=0; shift ;;
       -*) die "unknown option for new: $1" ;;
@@ -284,6 +297,17 @@ cmd_new() {
     interactive || die "--host is required"
     need gum
     host=$(gum input --prompt "Gateway host: " --placeholder vpn.example.com) || return 0
+  fi
+  host=$(normalize_host "$host")
+
+  # Only a single trailing `:digits` is a port. An IPv6 literal has more than
+  # one colon, and cutting at the last one would quietly mangle the address.
+  if [[ $host =~ ^([^:]+):([0-9]+)$ ]]; then
+    if ((port_given)) && [[ $port != "${BASH_REMATCH[2]}" ]]; then
+      die "gateway host carries port ${BASH_REMATCH[2]} but --port says $port"
+    fi
+    host=${BASH_REMATCH[1]}
+    port=${BASH_REMATCH[2]}
   fi
   [[ -n $host ]] || die "gateway host is required"
 
