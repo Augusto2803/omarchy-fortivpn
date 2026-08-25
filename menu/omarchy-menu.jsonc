@@ -1,0 +1,71 @@
+// FortiVPN entries for the Omarchy menu.
+//
+// install.sh merges this block into ~/.config/omarchy/extensions/omarchy-menu.jsonc.
+// To add them by hand instead, paste the "vpn..." rows into that file.
+//
+// Every row is guarded on the `fortivpn` command being on PATH, so the VPN
+// section disappears cleanly if the plugin is removed without its menu entries
+// being cleaned up.
+
+  "vpn": {"icon":"󰖂","label":"VPN","description":"FortiGate SSL VPN (openfortivpn)","when":"omarchy-cmd-present fortivpn"},
+
+  "vpn.connect": {
+    "icon":"󰢭",
+    "label":"Connect",
+    "action":"fortivpn up",
+    "description":"opens a terminal for the password and 2FA token",
+    "when":"omarchy-cmd-present fortivpn && ! fortivpn is-up"
+  },
+  "vpn.disconnect": {
+    "icon":"󰢾",
+    "label":"Disconnect",
+    "action":"fortivpn down",
+    "description":"tears down the tunnel, its routes and its DNS",
+    "when":"omarchy-cmd-present fortivpn && fortivpn is-up"
+  },
+  "vpn.status": {
+    "icon":"󰋼",
+    "label":"Status",
+    "action":"omarchy-launch-floating-terminal-with-presentation 'fortivpn status'",
+    "description":"profile, tunnel address and uptime",
+    "when":"omarchy-cmd-present fortivpn"
+  },
+
+  "vpn.profiles": {"icon":"󰒓","label":"Profiles","description":"create, edit and switch VPN profiles","when":"omarchy-cmd-present fortivpn"},
+
+  "vpn.profiles.use": {
+    "icon":"󰄬",
+    "label":"Set Default",
+    "action":"omarchy-launch-floating-terminal-with-presentation 'fortivpn use'",
+    "description":"pick which gateway Connect uses"
+  },
+  "vpn.profiles.new": {
+    "icon":"󰐕",
+    "label":"New",
+    "action":"omarchy-launch-floating-terminal-with-presentation 'fortivpn new'",
+    "description":"create a profile for another gateway"
+  },
+  "vpn.profiles.edit": {
+    "icon":"󰏫",
+    "label":"Edit",
+    "action":"omarchy-launch-floating-terminal-with-presentation 'fortivpn edit'",
+    "description":"open a profile in your editor"
+  },
+  "vpn.profiles.trust": {
+    "icon":"󰌾",
+    "label":"Pin Certificate",
+    "action":"omarchy-launch-floating-terminal-with-presentation 'fortivpn trust'",
+    "description":"fetch and pin the gateway's certificate fingerprint"
+  },
+  "vpn.profiles.rename": {
+    "icon":"󰑕",
+    "label":"Rename",
+    "action":"omarchy-launch-floating-terminal-with-presentation 'fortivpn rename'",
+    "description":"give a profile a different name"
+  },
+  "vpn.profiles.delete": {
+    "icon":"󰩹",
+    "label":"Delete",
+    "action":"omarchy-launch-floating-terminal-with-presentation 'fortivpn delete'",
+    "description":"remove a profile for good"
+  },

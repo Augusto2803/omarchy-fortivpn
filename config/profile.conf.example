@@ -1,0 +1,47 @@
+# Example openfortivpn profile.
+#
+# `fortivpn new` writes a file like this for you; this copy is here so you can
+# see the whole shape at once, or hand-write a profile without the wizard.
+#
+# Install as ~/.config/fortivpn/profiles/<name>.conf with mode 600. <name>
+# becomes the profile name in `fortivpn up <name>`.
+
+### Gateway ###################################################################
+
+host = vpn.example.com
+port = 443
+
+### Credentials ###############################################################
+
+username = your.user
+
+# The password is deliberately absent. With 2FA it is useless on its own, and
+# openfortivpn asks for the password and the token in the terminal at connect
+# time. If your gateway has no 2FA and you want it stored, uncomment the line
+# below — it is plain text, so keep this file at mode 600.
+# password = ...
+
+### Gateway certificate #######################################################
+
+# `fortivpn trust <name>` fills this in: it reads the gateway's certificate and
+# pins its SHA256 digest, which is the same value openfortivpn would print
+# after refusing an unknown certificate on the first connection.
+# trusted-cert = 0123456789abcdef...
+
+### DNS and routes ############################################################
+
+# With use-resolvconf the VPN's DNS servers are registered against the
+# fortivpn0 interface (real split-DNS) instead of overwriting /etc/resolv.conf
+# system-wide. On systemd-resolved hosts — Omarchy's default — /usr/bin/
+# resolvconf is the resolvectl shim, so this is the right setting there too.
+# Check what the tunnel pushed with: resolvectl status fortivpn0
+set-dns = 1
+use-resolvconf = 1
+
+# pppd can rewrite resolv.conf as well and races openfortivpn for it. Leaving
+# it off keeps the two from fighting.
+pppd-use-peerdns = 0
+
+# 1 sends all traffic through the tunnel (full tunnel). Use 0 when the gateway
+# already pushes the split-tunnel routes you need.
+set-routes = 1
